@@ -1,0 +1,14 @@
+# Fichiers de compilation
+*.o
+*.d
+*.exe
+build/
+
+# Exécutables fournis par le Makefile
+/reference/tsptask-v4/tsp
+/reference/tsptask-v4/tspprint
+/reference/tsptask-v4/intvecsort
+
+# Fichiers parasites macOS
+._*
+.DS_Store
