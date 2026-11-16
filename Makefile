@@ -25,3 +25,10 @@ test-stack:
 	mkdir -p build
 	$(CXX) $(CXXFLAGS) -o build/test_stack tests/test_stack.cpp
 	./build/test_stack
+
+.PHONY: test-runner
+
+test-runner:
+	mkdir -p build
+	$(CXX) $(CXXFLAGS) -o build/test_runner tests/test_runner.cpp
+	./build/test_runner

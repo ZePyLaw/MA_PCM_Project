@@ -1,8 +1,10 @@
 #pragma once
 
+#include <atomic>
 #include <climits>
 #include <cstdint>
 #include <iostream>
+#include <mutex>
 #include <stdexcept>
 #include <vector>
 
@@ -116,17 +118,12 @@ class TSPTask;
 // Member functions are defined after TSPTask, which is incomplete here.
 class TSPAllocator {
 public:
-	TSPAllocator() = default;
-	TSPAllocator(const TSPAllocator&) = delete;
-	TSPAllocator& operator=(const TSPAllocator&) = delete;
-	~TSPAllocator(); // deletes anything left in the free list
+    TSPAllocator() = default;
+    TSPAllocator(const TSPAllocator&) = delete;
+    TSPAllocator& operator=(const TSPAllocator&) = delete;
 
-	// this does not work with multiple threads!
-	TSPTask* reusealloc(TSPTask* task, int node);
-	// this does not work with multiple threads!
-	void reusefree(TSPTask* task);
-private:
-	std::vector<TSPTask*> _free_list;
+    TSPTask* reusealloc(TSPTask* task, int node);
+    void reusefree(TSPTask* task);
 };
 
 // single shared instance (one definition across all translation units)
@@ -150,8 +147,31 @@ class TSPTask : public Task {
 private:
 	static inline TSPPath _shortest = [] { TSPPath s; s.maximise(); return s; }();
 
+	static inline std::atomic<int> _best_distance{INT_MAX};
+	static inline std::mutex _best_mutex;
+
+	static int best_distance() {
+	    return _best_distance.load(std::memory_order_relaxed);
+	}
+
+	void try_update_best() {
+	    if (_path.distance() >= best_distance())
+	        return;
+
+	    std::lock_guard<std::mutex> lock(_best_mutex);
+
+	    if (_path.distance() < _shortest.distance()) {
+	        _shortest = _path;
+
+	        _best_distance.store(
+	            _path.distance(),
+	            std::memory_order_relaxed
+	        );
+	    }
+	}
 	TSPPath _path;
 	int _cutoff_size;
+
 public:
 	TSPTask() { _cutoff_size = TSPPath::full(); }
 	~TSPTask() override = default;
@@ -165,7 +185,20 @@ public:
 	// cutoff set, expressed as a distance from full path
 	void cutoff(int c) { _cutoff_size = TSPPath::full() - c; }
 	TSPPath& result() { return _shortest; }
-	static void reset_result() { _shortest = TSPPath(); _shortest.maximise(); }
+	
+	static void reset_result() {
+	    // Call only when no worker threads are running.
+	    std::lock_guard<std::mutex> lock(_best_mutex);
+
+	    _shortest = TSPPath();
+	    _shortest.maximise();
+
+	    _best_distance.store(
+	        INT_MAX,
+	        std::memory_order_relaxed
+	    );
+	}
+
 
 	// Task interface implementation: split, merge, solve, write
 
@@ -176,7 +209,7 @@ public:
 		for (int i=0; i<TSPPath::full(); i++) {
 			if (!_path.contains(i)) {
 				TSPTask* t = tspAllocator.reusealloc(this, i);
-				if (t->_path.distance() >= _shortest.distance()) {
+				if (t->_path.distance() >= best_distance()) {
 					tspAllocator.reusefree(t); // cannot beat the best path
 					continue;
 				}
@@ -196,48 +229,49 @@ public:
 		}
 	}
 
-	void solve() override {
-		if (_path.distance() >= _shortest.distance())
-			return; // cannot beat the best path
-		if (_path.size() == TSPPath::full()) {
-			_path.push(TSPPath::FIRST_NODE); // last node = first node
-			if (_path.distance() < _shortest.distance())
-				_shortest = _path;
-			_path.pop();
-		} else {
-			for (int i=0; i<TSPPath::full(); i++) {
-				if (!_path.contains(i)) {
-					_path.push(i);
-					if (_path.distance() < _shortest.distance())
-						solve();
-					_path.pop();
-				}
-			}
-		}
-	}
+void solve() override {
+    if (_path.distance() >= best_distance())
+        return;
+
+    if (_path.size() == TSPPath::full()) {
+
+        // Close the circuit by returning to the first city.
+        _path.push(TSPPath::FIRST_NODE);
+
+        try_update_best();
+
+        _path.pop();
+
+    } else {
+        for (int i = 0; i < TSPPath::full(); i++) {
+
+            if (!_path.contains(i)) {
+                _path.push(i);
+
+                if (_path.distance() < best_distance())
+                    solve();
+
+                _path.pop();
+            }
+        }
+    }
+}
+
 
 	void write(std::ostream& os) const override {
 		os << "Task(c=" << _cutoff_size << ')' << _path;
 	}
 };
 
-inline TSPAllocator::~TSPAllocator() {
-	for (TSPTask* t : _free_list)
-		delete t;
-}
+inline TSPTask* TSPAllocator::reusealloc(
+    TSPTask* task, int node) {
 
-inline TSPTask* TSPAllocator::reusealloc(TSPTask* task, int node) {
-	TSPTask* p = nullptr;
-	if (_free_list.empty()) {
-		p = new TSPTask();
-	} else {
-		p = _free_list.back();
-		_free_list.pop_back();
-	}
-	p->reuse(task, node);
-	return p;
+    TSPTask* p = new TSPTask();
+    p->reuse(task, node);
+    return p;
 }
 
 inline void TSPAllocator::reusefree(TSPTask* task) {
-	_free_list.push_back(task);
+    delete task;
 }
+

@@ -104,7 +104,8 @@ public:
 
 class TaskRunner {
 private:
-	std::chrono::time_point<std::chrono::high_resolution_clock> _start, _stop;
+	using Clock = std::chrono::steady_clock;
+	Clock::time_point _start, _stop;
 public:
 	virtual void run(Task* t) = 0;
 	virtual ~TaskRunner() = default;
@@ -113,8 +114,8 @@ public:
 		return diff.count();   // seconds as a double
 	}
 protected:
-	void startTimer() { _start = std::chrono::high_resolution_clock::now(); }
-	void stopTimer() { _stop = std::chrono::high_resolution_clock::now(); }
+	void startTimer() { _start = Clock::now(); }
+	void stopTimer() { _stop = Clock::now(); }
 };
 
 class DirectTaskRunner : public TaskRunner {
