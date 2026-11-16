@@ -18,3 +18,10 @@ clean:
 	rm -rf build
 
 -include build/tsp.d
+
+.PHONY: test-stack
+
+test-stack:
+	mkdir -p build
+	$(CXX) $(CXXFLAGS) -o build/test_stack tests/test_stack.cpp
+	./build/test_stack
